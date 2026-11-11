@@ -1991,7 +1991,7 @@ function decode(jpegData, userOpts = {}) {
 };
 __defs["main"] = function (module, exports, require) {
 /*
- * Reddit Top Image - PebbleOS plugin (source: social/reddit, one instance per subreddit preset).
+ * Reddit Top Image - PebbleOS plugin (source: Other/reddit, one instance per subreddit preset).
  *
  * Fetches the top image post of a subreddit for the last hour / day / week / ... and serves the
  * picture (watch-ready) together with the post title, author, score and link.
@@ -2007,7 +2007,7 @@ var jpegDecode = require('jpeg-decoder');
 var UPNG = require('upng-js');
 
 var VERSION = '1.1.0';
-var SOURCE_KEY = 'social/reddit';
+var SOURCE_KEY = 'Other/reddit';
 var USER_AGENT = 'pebble:reddit-top-image:1.1.0 (personal Pebble plugin)';
 var TOKEN_URL = 'https://www.reddit.com/api/v1/access_token';
 var API_HOST = 'oauth.reddit.com';
@@ -2890,7 +2890,7 @@ function propertiesFor(preset, post, wants, settings) {
 // ---------------------------------------------------------------- source handler
 
 Pebble.registerSourceHandler(async function (request, respond) {
-  if (request.category !== 'social' || request.item !== 'reddit') {
+  if (request.category !== 'Other' || request.item !== 'reddit') {
     respond.error('PLUGIN_UNAVAILABLE', 'this plugin only serves ' + SOURCE_KEY);
     return;
   }

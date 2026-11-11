@@ -37,7 +37,7 @@
       "script": "src/plugin/index.js",
       "sources": [
         {
-          "category": "social",
+          "category": "Other",
           "items": [
             "reddit"
           ],

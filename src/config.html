@@ -1,0 +1,312 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>Reddit Top Image</title>
+<style>
+  :root { --bg:#fff; --fg:#14161a; --muted:#667; --card:#f2f4f8; --line:#d5d9e2; --accent:#1d5fd1; --accent-fg:#fff; --warn:#a15c00; --warn-bg:#fff3d9; --bad:#b3261e; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#0e1116; --fg:#e8eaee; --muted:#9aa3b2; --card:#181d26; --line:#2b3340; --accent:#5b9bff; --accent-fg:#06101f; --warn:#ffcc66; --warn-bg:#332600; --bad:#ff8a80; }
+  }
+  * { box-sizing: border-box; }
+  [hidden] { display:none !important; }
+  body { margin:0; padding:16px; background:var(--bg); color:var(--fg); font:16px/1.4 system-ui,-apple-system,Roboto,sans-serif; }
+  main { max-width:560px; margin:0 auto; }
+  h1 { font-size:1.35rem; margin:0 0 2px; }
+  h2 { font-size:.8rem; letter-spacing:.06em; text-transform:uppercase; color:var(--muted); margin:22px 0 8px; }
+  .sub { color:var(--muted); margin:0 0 14px; font-size:.9rem; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:12px; }
+  .banner { background:var(--warn-bg); color:var(--warn); border-radius:10px; padding:10px 12px; margin:0 0 12px; font-size:.9rem; }
+  .banner.bad { color:var(--bad); }
+  .row { display:flex; gap:8px; align-items:center; margin:8px 0; flex-wrap:wrap; }
+  .row > label { flex:0 0 96px; }
+  select, input[type=date], input[type=number] { font:inherit; color:inherit; background:var(--bg); border:1px solid var(--line); border-radius:8px; padding:8px; flex:1 1 180px; min-width:0; }
+  input[type=range] { flex:1 1 180px; }
+  input[type=number] { flex:0 1 80px; }
+  button { font:inherit; border:1px solid var(--line); background:var(--bg); color:var(--fg); border-radius:10px; padding:10px 14px; cursor:pointer; }
+  button.primary { background:var(--accent); color:var(--accent-fg); border-color:var(--accent); font-weight:600; }
+  button:disabled { opacity:.5; cursor:default; }
+  .actions { display:flex; gap:8px; margin-top:14px; }
+  .actions button { flex:1; }
+  .previews { display:flex; gap:12px; flex-wrap:nowrap; align-items:flex-start; }
+  .previews figure { margin:0; min-width:0; }
+  .previews figure:first-child { flex:0 0 calc(50% - 6px); }
+  .previews figure:last-child { flex:1 1 0; }
+  figcaption { font-size:.78rem; color:var(--muted); margin-top:4px; }
+  canvas, .orig { display:block; width:100%; max-width:100%; background:#000; border-radius:8px; image-rendering:pixelated; }
+  canvas.round { border-radius:50%; }
+  .orig { image-rendering:auto; min-height:60px; object-fit:contain; max-height:320px; }
+  .status { margin:10px 0 0; font-size:.9rem; color:var(--muted); min-height:1.3em; }
+  .status.bad { color:var(--bad); }
+  .meta h3 { margin:12px 0 2px; font-size:1.05rem; }
+  .meta p { margin:2px 0; color:var(--muted); font-size:.85rem; }
+  details { margin-top:10px; }
+  summary { cursor:pointer; color:var(--muted); font-size:.9rem; }
+  pre { white-space:pre-wrap; word-break:break-word; font-size:.74rem; background:var(--bg); border:1px solid var(--line); border-radius:8px; padding:8px; max-height:260px; overflow:auto; }
+  .expl { white-space:pre-line; font-size:.88rem; margin-top:6px; }
+  .check { display:flex; gap:10px; align-items:flex-start; margin:10px 0; }
+  .check input { margin-top:4px; }
+  .check small { display:block; color:var(--muted); }
+  .tabs { display:flex; gap:6px; flex-wrap:wrap; margin-bottom:6px; }
+  .tabs button { padding:6px 10px; font-size:.9rem; }
+  .tabs button.sel { background:var(--accent); color:var(--accent-fg); border-color:var(--accent); }
+  input[type=text] { font:inherit; color:inherit; background:var(--bg); border:1px solid var(--line); border-radius:8px; padding:8px; flex:1 1 180px; min-width:0; }
+  a { color:var(--accent); word-break:break-all; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Reddit Top Image</h1>
+  <p class="sub">Plugin source <code>social/reddit</code> &middot; <span id="ver">starting&hellip;</span></p>
+
+  <div id="banner" class="banner" hidden></div>
+
+  <h2>Preview</h2>
+  <div class="card">
+    <div class="previews">
+      <figure>
+        <canvas id="canvas" width="200" height="228"></canvas>
+        <figcaption id="canvasCap">What a watchface receives</figcaption>
+      </figure>
+      <figure>
+        <img id="orig" class="orig" alt="Original picture from Reddit" referrerpolicy="no-referrer" hidden>
+        <figcaption id="origCap">Original from Reddit</figcaption>
+      </figure>
+    </div>
+    <div class="meta" id="meta"></div>
+    <p id="status" class="status">Waiting for the plugin&hellip;</p>
+    <div class="actions"><button id="fetch" class="primary" disabled>Fetch &amp; convert</button><button id="fresh" disabled>Refetch listing</button></div>
+    <details><summary>Diagnostics</summary><pre id="log">(nothing yet)</pre>
+      <div class="row"><button id="clear">Clear caches</button></div>
+    </details>
+  </div>
+
+  <h2>Subreddits</h2>
+  <div class="card">
+    <p class="sub" style="margin-top:0">Each one is a separate choice a watchface can pick. Up to 4.</p>
+    <div class="tabs" id="tabs"></div>
+    <div class="row"><label for="subSelect">Subreddit</label><select id="subSelect"></select></div>
+    <div class="row" id="customSub" hidden><label for="subreddit">Name</label><input type="text" id="subreddit" maxlength="60" placeholder="e.g. itookapicture" autocapitalize="off" autocorrect="off" spellcheck="false"></div>
+    <div class="row"><label for="period">Top of</label><select id="period"></select></div>
+    <label class="check"><input type="checkbox" id="nsfw"><span>Allow NSFW posts<small>Off: posts marked 18+ are skipped and the next picture is used.</small></span></label>
+    <div class="actions"><button id="remove">Remove this subreddit</button></div>
+  </div>
+
+  <h2>Watch size</h2>
+  <div class="card">
+    <div class="row"><label for="preset">Preview as</label>
+      <select id="preset">
+        <option value="200x228">Pebble Time 2 (200&times;228)</option>
+        <option value="260x260" data-round="1">Pebble Round 2 (260&times;260)</option>
+        <option value="144x168">Pebble Time / Pebble 2 (144&times;168)</option>
+        <option value="180x180" data-round="1">Pebble Time Round (180&times;180)</option>
+        <option value="custom">Custom&hellip;</option>
+      </select></div>
+    <div class="row" id="customRow" hidden>
+      <input type="number" id="cw" min="1" max="260" value="200"> &times; <input type="number" id="ch" min="1" max="260" value="228">
+    </div>
+    <small style="color:var(--muted)">Only affects this preview. Each watchface asks the plugin for its own size.</small>
+  </div>
+
+  <h2>Image (all subreddits)</h2>
+  <div class="card">
+    <div class="row"><label for="fit">Framing</label>
+      <select id="fit"><option value="fill">Fill screen (crop edges)</option><option value="fit">Fit whole picture (letterbox)</option></select></div>
+    <div class="row"><label for="color">Colours</label>
+      <select id="color"><option value="color">Colour (best 16 of 64)</option><option value="gray">Grayscale (4 levels)</option></select></div>
+    <div class="row"><label for="dim">Dim <span id="dimv">0</span>%</label>
+      <input type="range" id="dim" min="0" max="70" step="5" value="0"></div>
+    <div class="row"><label for="titleShort">Title</label>
+      <select id="titleShort"><option value="full">Full title in every text slot</option><option value="abbrev">Abbreviated in short slots (~7 chars)</option></select></div>
+    <div class="row"><label for="videos">Video posts</label>
+      <select id="videos"><option value="skip">Skip (pictures only)</option><option value="thumb">Use the video's preview picture</option></select></div>
+    <label class="check"><input type="checkbox" id="dither"><span>Dithering<small>Smoother gradients with few colours.</small></span></label>
+    <div class="actions"><button id="save" class="primary" disabled>Save settings</button></div>
+  </div>
+</main>
+
+<script>
+(function () {
+  'use strict';
+  var $ = function (id) { return document.getElementById(id); };
+  var busy = false, ready = false, timer = null;
+  var presets = [], sel = 0, periods = [], suggested = [], defaultPreset = null, maxPresets = 4;
+
+  function setStatus(text, bad) { var s = $('status'); s.textContent = text; s.className = 'status' + (bad ? ' bad' : ''); }
+  function send(message) { return Pebble.sendMessage('plugin', message); }
+  function schedule(ms) { clearTimeout(timer); timer = setTimeout(function () { if (ready) preview(false); }, ms || 800); }
+
+  function readGlobal() {
+    return { presets: presets, fit: $('fit').value, color: $('color').value, dim: +$('dim').value, titleShort: $('titleShort').value, videos: $('videos').value, dither: $('dither').checked };
+  }
+  function writeGlobal(s) {
+    $('fit').value = s.fit; $('color').value = s.color; $('dim').value = s.dim; $('dimv').textContent = s.dim;
+    $('titleShort').value = s.titleShort || 'full'; $('videos').value = s.videos || 'skip'; $('dither').checked = !!s.dither;
+  }
+  function readForm() {
+    var p = presets[sel];
+    p.subreddit = $('subSelect').value === '__custom' ? $('subreddit').value.trim() : $('subSelect').value; p.period = $('period').value; p.nsfw = $('nsfw').checked;
+  }
+  function writeForm() {
+    var p = presets[sel];
+    var known = suggested.filter(function (n) { return n.toLowerCase() === String(p.subreddit).toLowerCase(); })[0];
+    $('subSelect').value = known || '__custom'; $('subreddit').value = known ? '' : p.subreddit;
+    $('customSub').hidden = !!known;
+    $('period').value = p.period; $('nsfw').checked = !!p.nsfw;
+    $('remove').disabled = presets.length < 2;
+  }
+  function renderTabs() {
+    var t = $('tabs'); t.textContent = '';
+    presets.forEach(function (p, i) {
+      var b = document.createElement('button'); b.textContent = 'r/' + (p.subreddit || '…'); b.className = i === sel ? 'sel' : '';
+      b.onclick = function () { sel = i; renderTabs(); writeForm(); schedule(100); }; t.appendChild(b);
+    });
+    if (presets.length < maxPresets) {
+      var a = document.createElement('button'); a.textContent = '+ Add'; a.onclick = addPreset; t.appendChild(a);
+    }
+  }
+  function addPreset() {
+    var used = presets.map(function (p) { return p.id; }), n = 1;
+    while (used.indexOf('p' + n) >= 0) n++;
+    var taken = presets.map(function (p) { return p.subreddit.toLowerCase(); });
+    var pick = suggested.filter(function (x) { return taken.indexOf(x.toLowerCase()) < 0; })[0] || 'pics';
+    presets.push({ id: 'p' + n, subreddit: pick, period: presets[sel].period, nsfw: false });
+    sel = presets.length - 1; renderTabs(); writeForm(); schedule(200);
+  }
+  function size() {
+    var v = $('preset').value;
+    if (v === 'custom') return { w: Math.max(1, Math.min(260, +$('cw').value || 144)), h: Math.max(1, Math.min(260, +$('ch').value || 168)) };
+    var p = v.split('x'); return { w: +p[0], h: +p[1] };
+  }
+  function lock(on) {
+    busy = on;
+    ['fetch', 'fresh', 'save', 'clear'].forEach(function (id) { $(id).disabled = on || !ready; });
+  }
+  function showBanner(missing, extra) {
+    var b = $('banner'), parts = [];
+    if (missing && missing.length) parts.push('Internet access is switched off for: ' + missing.join(', ') + '. Open this plugin’s permissions in the Pebble app and allow those domains.');
+    if (extra) parts.push(extra);
+    b.hidden = !parts.length; b.textContent = parts.join(' ');
+  }
+
+  function b64(s) { var bin = atob(s), out = new Uint8Array(bin.length); for (var i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i); return out; }
+  function drawBitmap(bm) {
+    var c = $('canvas'), ctx = c.getContext('2d');
+    c.width = bm.width; c.height = bm.height; c.style.maxWidth = bm.width + 'px';
+    var px = b64(bm.pixels), pal = b64(bm.palette), stride = (bm.width + 1) >> 1;
+    var img = ctx.createImageData(bm.width, bm.height);
+    for (var y = 0; y < bm.height; y++) for (var x = 0; x < bm.width; x++) {
+      var byte = px[y * stride + (x >> 1)], i = (x & 1) ? (byte & 15) : (byte >> 4);
+      var g = pal[i] === undefined ? 0 : pal[i], o = (y * bm.width + x) * 4;
+      img.data[o] = ((g >> 4) & 3) * 85; img.data[o + 1] = ((g >> 2) & 3) * 85; img.data[o + 2] = (g & 3) * 85; img.data[o + 3] = 255;
+    }
+    ctx.putImageData(img, 0, 0);
+  }
+  function clearCanvas(w, h) { var c = $('canvas'); c.width = w; c.height = h; c.style.maxWidth = w + 'px'; c.getContext('2d').clearRect(0, 0, w, h); }
+  function fmtTime(sec) { return sec ? new Date(sec * 1000).toLocaleString() : ''; }
+
+  function renderMeta(r) {
+    var m = $('meta'); m.textContent = '';
+    if (!r.post) return;
+    var p = r.post;
+    function line(text) { var e = document.createElement('p'); e.textContent = text; m.appendChild(e); return e; }
+    var h = document.createElement('h3'); h.textContent = p.title; m.appendChild(h);
+    line('u/' + p.author + ' · r/' + p.subreddit + ' · ' + p.score + ' points · ' + p.comments + ' comments');
+    line(fmtTime(p.created) + (p.nsfw ? ' · NSFW' : '') + (p.video ? ' · video post (preview picture)' : '') + (r.skipped ? ' · #' + (r.skipped + 1) + ' in the list (earlier ones skipped)' : ''));
+    if (r.served) line('Served as short text: \u201c' + r.served.titleShort + '\u201d · long text: full title (' + r.served.titleLong.length + ' characters)');
+    if (p.permalink) { var a = document.createElement('p'), l = document.createElement('a'); l.href = p.permalink; l.textContent = p.permalink; l.target = '_blank'; l.rel = 'noreferrer'; a.appendChild(l); m.appendChild(a); }
+  }
+
+  async function preview(fresh) {
+    if (busy) return;
+    clearTimeout(timer);
+    lock(true);
+    var sz = size();
+    $('canvas').className = $('preset').selectedOptions[0] && $('preset').selectedOptions[0].dataset.round ? 'round' : '';
+    setStatus('Fetching from Reddit and converting…');
+    try {
+      readForm();
+      var r = await send({ type: 'preview', width: sz.w, height: sz.h, fresh: !!fresh, preset: presets[sel], settings: readGlobal() });
+      $('log').textContent = (r.log && r.log.length ? r.log.join('\n') : '(no log)');
+      showBanner(r.missingPermissions);
+      renderMeta(r);
+      var o = $('orig');
+      var res = r.post && r.post.images && r.post.images.resolutions || [];
+      var thumb = res.length ? res[res.length - 1].url : (r.post && r.post.images && (r.post.images.direct || (r.post.images.source && r.post.images.source.url)));
+      if (thumb) {
+        o.hidden = false; o.onerror = function () { $('origCap').textContent = 'Original from Reddit (could not be displayed here)'; };
+        o.onload = function () { $('origCap').textContent = 'Original from Reddit (' + o.naturalWidth + '×' + o.naturalHeight + ' preview)'; };
+        o.src = thumb;
+      } else { o.hidden = true; }
+      if (r.error) { setStatus(r.error, true); clearCanvas(sz.w, sz.h); return; }
+      if (r.image) {
+        drawBitmap(r.image);
+        var i = r.info || {};
+        $('canvasCap').textContent = 'What a watchface receives · ' + r.image.width + '×' + r.image.height + ', 16-colour palette';
+        setStatus('Works: ' + (i.format || '').toUpperCase() + ' ' + (i.sourceWidth || '?') + '×' + (i.sourceHeight || '?') + ', ' + Math.round((i.bytes || 0) / 1024) + ' KB downloaded.' + (r.stale ? ' (Reddit could not be reached; showing an older listing.)' : ''));
+      } else {
+        clearCanvas(sz.w, sz.h);
+        setStatus('Post found, but no image: ' + (r.imageError || 'unknown reason') + ' (see Diagnostics)', true);
+      }
+    } catch (e) {
+      setStatus('Plugin error: ' + (e && e.message ? e.message : e), true);
+    } finally { lock(false); }
+  }
+
+  async function save() {
+    if (busy) return;
+    lock(true);
+    try {
+      readForm();
+      var r = await send({ type: 'save', settings: readGlobal() });
+      if (r && r.ok) { presets = r.settings.presets; sel = Math.min(sel, presets.length - 1); renderTabs(); writeForm(); }
+      setStatus(r && r.ok ? 'Saved. Watchfaces will refresh with these settings.' : 'Save failed: ' + (r && r.error), !(r && r.ok));
+    } catch (e) { setStatus('Save failed: ' + e, true); } finally { lock(false); }
+  }
+
+  $('fetch').onclick = function () { preview(false); };
+  $('fresh').onclick = function () { preview(true); };
+  $('save').onclick = save;
+  $('preset').onchange = function () { $('customRow').hidden = $('preset').value !== 'custom'; schedule(200); };
+  $('cw').onchange = $('ch').onchange = function () { schedule(300); };
+  $('dim').oninput = function () { $('dimv').textContent = $('dim').value; };
+  ['fit', 'color', 'dim', 'dither', 'titleShort', 'videos', 'period', 'nsfw'].forEach(function (id) {
+    $(id).addEventListener('change', function () { readForm(); schedule(500); });
+  });
+  $('subSelect').addEventListener('change', function () {
+    var custom = $('subSelect').value === '__custom';
+    $('customSub').hidden = !custom;
+    if (custom) { $('subreddit').value = ''; $('subreddit').focus(); }
+    readForm(); renderTabs(); if (!custom) schedule(300);
+  });
+  $('subreddit').addEventListener('input', function () { readForm(); renderTabs(); schedule(1000); });
+  $('remove').onclick = function () { if (presets.length < 2) return; presets.splice(sel, 1); sel = Math.max(0, sel - 1); renderTabs(); writeForm(); schedule(200); };
+  $('clear').onclick = async function () {
+    if (busy) return; lock(true);
+    try { await send({ type: 'clearCache' }); setStatus('Caches cleared.'); } catch (e) { setStatus('' + e, true); } finally { lock(false); }
+  };
+
+  Pebble.addEventListener('ready', async function (event) {
+    if (event && event.target && event.target !== 'plugin') return;
+    try {
+      var init = await send({ type: 'init' });
+      if (!init || init.error) throw new Error(init && init.error || 'no reply');
+      ready = true; suggested = init.suggested || []; periods = init.periods; maxPresets = init.maxPresets; defaultPreset = init.defaultPreset;
+      $('ver').textContent = 'v' + init.version;
+      $('period').textContent = ''; periods.forEach(function (p) { var o = document.createElement('option'); o.value = p.id; o.textContent = p.label; $('period').appendChild(o); });
+      $('subSelect').textContent = '';
+      suggested.concat(['__custom']).forEach(function (n) { var o = document.createElement('option'); o.value = n; o.textContent = n === '__custom' ? 'Other (type a name)…' : 'r/' + n; $('subSelect').appendChild(o); });
+      presets = init.settings.presets; sel = 0;
+      writeGlobal(init.settings); renderTabs(); writeForm();
+      showBanner(init.missingPermissions, init.lastError ? 'Last background error: ' + init.lastError.message : '');
+      lock(false);
+      preview(false);
+    } catch (e) { setStatus('Plugin did not answer: ' + (e && e.message ? e.message : e), true); }
+  });
+  setTimeout(function () { if (!ready) setStatus('Still waiting for the plugin to start… if this stays, the plugin script failed to load.', true); }, 6000);
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,93 @@
+{
+  "name": "reddit-top-image",
+  "author": "zalew",
+  "version": "1.0.0",
+  "keywords": [
+    "pebble-plugin"
+  ],
+  "private": true,
+  "scripts": {
+    "build:plugin": "node tools/build-plugin.js",
+    "test": "node tools/test/run.js"
+  },
+  "dependencies": {},
+  "pebble": {
+    "displayName": "Reddit Top Image",
+    "uuid": "1a9e992a-892a-4e6b-aa28-726bc45e3469",
+    "sdkVersion": "3",
+    "projectType": "plugin",
+    "configPage": "src/config.html",
+    "usesPermissions": [
+      {
+        "name": "Internet",
+        "parameters": {
+          "domains": [
+            "www.reddit.com",
+            "old.reddit.com",
+            "i.redd.it",
+            "preview.redd.it",
+            "external-preview.redd.it",
+            "i.imgur.com"
+          ]
+        }
+      }
+    ],
+    "plugin": {
+      "description": "Top picture of a subreddit for the past hour, day, week or longer: the image (watch-ready) plus post title, author, score and link.",
+      "script": "src/plugin/index.js",
+      "sources": [
+        {
+          "category": "social",
+          "items": [
+            "reddit"
+          ],
+          "supportsMultiple": true,
+          "properties": {
+            "name": [
+              "shortText",
+              "longText"
+            ],
+            "period": [
+              "shortText",
+              "longText"
+            ],
+            "title": [
+              "shortText",
+              "longText"
+            ],
+            "author": [
+              "shortText",
+              "longText"
+            ],
+            "subreddit": [
+              "shortText",
+              "longText"
+            ],
+            "score": [
+              "numericValue",
+              "shortText"
+            ],
+            "comments": [
+              "numericValue",
+              "shortText"
+            ],
+            "posted": [
+              "timestamp",
+              "shortText"
+            ],
+            "permalink": [
+              "longText"
+            ],
+            "image_url": [
+              "longText"
+            ],
+            "image": [
+              "image"
+            ]
+          },
+          "suggestedRefreshIntervalSec": 900
+        }
+      ]
+    }
+  }
+}

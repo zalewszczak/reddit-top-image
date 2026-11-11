@@ -14,10 +14,13 @@
 var jpegDecode = require('jpeg-decoder');
 var UPNG = require('upng-js');
 
-var VERSION = '1.0.0';
+var VERSION = '1.1.0';
 var SOURCE_KEY = 'social/reddit';
-var USER_AGENT = 'PebbleOS-Reddit-Top-Image/1.0 (personal Pebble plugin)';
-var LISTING_HOSTS = ['www.reddit.com', 'old.reddit.com'];
+var USER_AGENT = 'pebble:reddit-top-image:1.1.0 (personal Pebble plugin)';
+var TOKEN_URL = 'https://www.reddit.com/api/v1/access_token';
+var API_HOST = 'oauth.reddit.com';
+var TOKEN_KEY = 'reddit.token.v1';
+var DEVICE_KEY = 'reddit.device.v1';
 var LISTING_LIMIT = 30;
 
 var SETTINGS_KEY = 'reddit.settings.v1';
@@ -520,6 +523,8 @@ function sanitizeSettings(s) {
     color: s.color === 'gray' ? 'gray' : 'color',
     dither: s.dither === undefined ? DEFAULTS.dither : !!s.dither,
     dim: clampInt(s.dim, 0, 70, DEFAULTS.dim),
+    clientId: /^[A-Za-z0-9_-]{6,60}$/.test(String(s.clientId || '').trim()) ? String(s.clientId).trim() : '',
+    clientSecret: /^[A-Za-z0-9_-]{6,100}$/.test(String(s.clientSecret || '').trim()) ? String(s.clientSecret).trim() : '',
     videos: s.videos === 'thumb' ? 'thumb' : 'skip',
     titleShort: s.titleShort === 'abbrev' ? 'abbrev' : 'full'
   };
@@ -601,45 +606,181 @@ function httpProblem(status, host) {
   return 'HTTP ' + status + ' from ' + host;
 }
 
-async function downloadListing(preset, log) {
-  var lastError = null;
-  for (var i = 0; i < LISTING_HOSTS.length; i++) {
-    var url = 'https://' + LISTING_HOSTS[i] + '/r/' + preset.subreddit + '/top.json?t=' + preset.period + '&limit=' + LISTING_LIMIT + '&raw_json=1';
-    try {
-      log('GET ' + url);
-      var response = await fetch(url, { headers: { 'Accept': 'application/json', 'User-Agent': USER_AGENT } });
-      if (!response.ok) { lastError = new Error(httpProblem(response.status, LISTING_HOSTS[i])); lastError.status = response.status; log(errText(lastError)); if (response.status === 404) break; continue; }
-      var text = await response.text();
-      var json;
-      try { json = JSON.parse(text); } catch (e) { throw new Error('Reddit did not answer with JSON (' + oneLine(String(text).slice(0, 60)) + ')'); }
-      var children = json && json.data && json.data.children;
-      if (!Array.isArray(children)) throw new Error('unexpected Reddit reply');
-      var posts = [];
-      children.forEach(function (c) {
-        if (!c || !c.data) return;
-        var p = normalizePost(c.data);
-        if (p) posts.push(p);
-      });
-      log(children.length + ' posts, ' + posts.length + ' with a picture');
-      return posts.slice(0, 20);
-    } catch (e) {
-      lastError = e; log('failed: ' + errText(e));
+function parsePosts(text, log) {
+  var json;
+  try { json = JSON.parse(text); } catch (e) { throw new Error('Reddit did not answer with JSON (' + oneLine(String(text).slice(0, 60)) + ')'); }
+  var children = json && json.data && json.data.children;
+  if (!Array.isArray(children)) throw new Error('unexpected Reddit reply');
+  var posts = [];
+  children.forEach(function (c) {
+    if (!c || !c.data) return;
+    var p = normalizePost(c.data);
+    if (p) posts.push(p);
+  });
+  log(children.length + ' posts, ' + posts.length + ' with a picture');
+  return posts.slice(0, 20);
+}
+
+function hasCredentials(settings) { return !!(settings && settings.clientId); }
+
+/** App-only OAuth token (no Reddit login needed): client_credentials with a secret, installed_client without. */
+async function getToken(settings, log, force) {
+  var sig = settings.clientId + ':' + urlHashSimple(settings.clientSecret);
+  var rec = storeGet(TOKEN_KEY);
+  if (!force && rec && rec.sig === sig && rec.exp - Date.now() > 60000) return rec.token;
+  var body;
+  if (settings.clientSecret) {
+    body = 'grant_type=client_credentials';
+  } else {
+    var dev = storeGet(DEVICE_KEY);
+    if (!dev) {
+      dev = '';
+      var chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
+      for (var i = 0; i < 26; i++) dev += chars.charAt(Math.floor(Math.random() * chars.length));
+      storeSet(DEVICE_KEY, dev);
     }
+    body = 'grant_type=' + encodeURIComponent('https://oauth.reddit.com/grants/installed_client') + '&device_id=' + dev;
   }
-  throw lastError || new Error('Reddit request failed');
+  log('POST ' + TOKEN_URL + ' (' + (settings.clientSecret ? 'client_credentials' : 'installed_client') + ')');
+  var response = await fetch(TOKEN_URL, {
+    method: 'POST',
+    headers: { 'Authorization': 'Basic ' + btoa(settings.clientId + ':' + (settings.clientSecret || '')), 'Content-Type': 'application/x-www-form-urlencoded', 'User-Agent': USER_AGENT, 'Accept': 'application/json' },
+    body: body
+  });
+  var text = await response.text();
+  if (response.status === 401 || response.status === 403) throw new Error('Reddit rejected the client ID / secret (HTTP ' + response.status + '). Check them, and that the app is set up as "script" (with secret) or "installed app" (leave the secret empty).');
+  if (!response.ok) throw new Error('Reddit token request failed (HTTP ' + response.status + ')');
+  var json;
+  try { json = JSON.parse(text); } catch (e) { json = null; }
+  if (!json || !json.access_token) throw new Error('Reddit token reply had no access_token' + (json && json.error ? ' (' + json.error + ')' : ''));
+  storeSet(TOKEN_KEY, { sig: sig, token: json.access_token, exp: Date.now() + (Number(json.expires_in) || 3600) * 1000 });
+  return json.access_token;
+}
+
+function urlHashSimple(u) {
+  var h = 5381; u = String(u || '');
+  for (var i = 0; i < u.length; i++) h = ((h * 33) ^ u.charCodeAt(i)) >>> 0;
+  return h.toString(36);
+}
+
+async function downloadListingOAuth(preset, settings, log) {
+  var url = 'https://' + API_HOST + '/r/' + preset.subreddit + '/top?t=' + preset.period + '&limit=' + LISTING_LIMIT + '&raw_json=1';
+  for (var attempt = 0; attempt < 2; attempt++) {
+    var token = await getToken(settings, log, attempt > 0);
+    log('GET ' + url);
+    var response = await fetch(url, { headers: { 'Authorization': 'Bearer ' + token, 'Accept': 'application/json', 'User-Agent': USER_AGENT } });
+    if (response.status === 401 && attempt === 0) { log('token rejected, getting a new one'); storeRemove(TOKEN_KEY); continue; }
+    if (!response.ok) {
+      var msg = httpProblem(response.status, API_HOST);
+      if (response.status === 403) msg = 'Reddit refused the request (HTTP 403): the subreddit is private, quarantined or banned, or this API app has not been approved for use yet';
+      throw new Error(msg);
+    }
+    return parsePosts(await response.text(), log);
+  }
+  throw new Error('Reddit rejected the access token');
+}
+
+async function downloadListingJson(preset, log) {
+  var url = 'https://www.reddit.com/r/' + preset.subreddit + '/top.json?t=' + preset.period + '&limit=' + LISTING_LIMIT + '&raw_json=1';
+  log('GET ' + url);
+  var response = await fetch(url, { headers: { 'Accept': 'application/json', 'User-Agent': USER_AGENT } });
+  if (!response.ok) { var err = new Error(httpProblem(response.status, 'www.reddit.com')); err.status = response.status; throw err; }
+  return parsePosts(await response.text(), log);
+}
+
+// ---- RSS fallback: no key needed, but only title/author/link/picture (no score, comments or NSFW flag).
+
+function xmlText(block, tag) {
+  var m = new RegExp('<' + tag + '(?:\\s[^>]*)?>([\\s\\S]*?)</' + tag + '>', 'i').exec(block);
+  return m ? m[1] : '';
+}
+
+function urlWidth(url) {
+  var m = /[?&]width=(\d+)/.exec(url);
+  return m ? Number(m[1]) : 0;
+}
+
+function parseRss(xml, log) {
+  var posts = [], total = 0, re = /<entry[\s>]([\s\S]*?)<\/entry>/gi, m;
+  while ((m = re.exec(xml))) {
+    total++;
+    var e = m[1];
+    var html = decodeEntities(xmlText(e, 'content'));          // the content is escaped HTML
+    var title = oneLine(decodeEntities(stripHtml(xmlText(e, 'title'))));
+    var id = (/<id>\s*(?:t3_)?([\w]+)\s*<\/id>/i.exec(e) || [])[1] || '';
+    var author = oneLine(decodeEntities(xmlText(e, 'name'))).replace(/^\/?u\//i, '') || '[deleted]';
+    var cat = /<category[^>]*\bterm="([^"]+)"/i.exec(e);
+    var link = (/<link[^>]*\bhref="([^"]+)"/i.exec(e) || [])[1] || '';
+    var updated = Date.parse(xmlText(e, 'updated') || xmlText(e, 'published'));
+    var target = (/<a href="([^"]+)">\s*\[link\]\s*<\/a>/i.exec(html) || [])[1];
+    target = target ? decodeEntities(target) : '';
+    var res = [], seen = {};
+    var imgRe = /<img[^>]*\bsrc="([^"]+)"/gi, im;
+    while ((im = imgRe.exec(html))) {
+      var u = decodeEntities(im[1]);
+      if (/^https:\/\//i.test(u) && !seen[u]) { seen[u] = 1; var w = urlWidth(u) || 140; res.push({ w: w, h: w, url: u }); }
+    }
+    var th = /<media:thumbnail[^>]*\burl="([^"]+)"/i.exec(e);
+    if (th) { var tu = decodeEntities(th[1]); if (/^https:\/\//i.test(tu) && !seen[tu]) res.push({ w: urlWidth(tu) || 140, h: urlWidth(tu) || 140, url: tu }); }
+    res.sort(function (a, b) { return a.w - b.w; });
+    var direct = /^https:\/\/(i\.redd\.it|i\.imgur\.com)\/.*\.(jpe?g|png)(\?|$)/i.test(target) ? target : '';
+    if (!res.length && !direct) continue;                      // text post or nothing to show
+    var host = hostOf(target);
+    posts.push({
+      id: id || String(posts.length), title: title, author: author, subreddit: cat ? cat[1] : '', score: null, comments: null,
+      created: isNaN(updated) ? 0 : Math.floor(updated / 1000),
+      nsfw: /\bnsfw\b|\b18\+/i.test(title), video: /^(v\.redd\.it|youtu\.be|(www\.)?youtube\.com|gfycat\.com|streamable\.com)$/.test(host),
+      permalink: link, images: { resolutions: res, source: null, direct: direct }
+    });
+  }
+  log(total + ' feed entries, ' + posts.length + ' with a picture');
+  return posts.slice(0, 20);
+}
+
+async function downloadListingRss(preset, log) {
+  var url = 'https://www.reddit.com/r/' + preset.subreddit + '/top/.rss?t=' + preset.period + '&limit=' + LISTING_LIMIT;
+  log('GET ' + url);
+  var response = await fetch(url, { headers: { 'Accept': 'application/atom+xml,application/xml;q=0.9,*/*;q=0.5', 'User-Agent': USER_AGENT } });
+  if (!response.ok) { var err = new Error(httpProblem(response.status, 'www.reddit.com') + ' (RSS)'); err.status = response.status; throw err; }
+  var text = await response.text();
+  if (!/<feed[\s>]/i.test(text)) throw new Error('Reddit RSS reply was not a feed');
+  return parseRss(text, log);
+}
+
+/** Sign-in or anonymous JSON first, then the RSS feed. Returns { posts, via }. */
+async function downloadListing(preset, settings, log) {
+  var primary;
+  try {
+    var withKey = hasCredentials(settings);
+    return { posts: withKey ? await downloadListingOAuth(preset, settings, log) : await downloadListingJson(preset, log), via: withKey ? 'oauth' : 'json' };
+  } catch (e) {
+    primary = e; log('failed: ' + errText(e));
+  }
+  var rssError = null;
+  try {
+    return { posts: await downloadListingRss(preset, log), via: 'rss' };
+  } catch (e2) {
+    rssError = e2; log('RSS failed: ' + errText(e2));
+  }
+  var msg = errText(primary);
+  if (!hasCredentials(settings) && primary.status !== 404) msg += '. Reddit blocks anonymous access (RSS fallback failed too: ' + errText(rssError) + '); add a Reddit API client ID in the plugin settings';
+  var out = new Error(msg);
+  out.name = primary && primary.name === 'NotAllowedError' ? 'NotAllowedError' : 'Error';
+  throw out;
 }
 
 /** Cached listing if fresh, else download; on failure fall back to an older copy. */
-async function getListing(preset, log, opts) {
+async function getListing(preset, settings, log, opts) {
   opts = opts || {};
   var key = listingKey(preset), rec = storeGet(LISTING_PREFIX + key), ttl = PERIODS[preset.period].ttlMs;
-  if (!opts.force && rec && Date.now() - rec.t < ttl) { log('listing from cache'); return { posts: rec.posts, stale: false, ttlLeft: ttl - (Date.now() - rec.t) }; }
+  var usable = rec && !(rec.via === 'rss' && hasCredentials(settings));
+  if (!opts.force && usable && Date.now() - rec.t < ttl) { log('listing from cache'); return { posts: rec.posts, via: rec.via, stale: false, ttlLeft: ttl - (Date.now() - rec.t) }; }
   try {
-    var posts = await downloadListing(preset, log);
-    cacheListing(key, { t: Date.now(), posts: posts });
-    return { posts: posts, stale: false, ttlLeft: ttl };
+    var got = await downloadListing(preset, settings, log);
+    cacheListing(key, { t: Date.now(), posts: got.posts, via: got.via });
+    return { posts: got.posts, via: got.via, stale: false, ttlLeft: ttl };
   } catch (e) {
-    if (rec && rec.posts) { log('using an older copy of the listing'); return { posts: rec.posts, stale: true, ttlLeft: STALE_TTL_MS }; }
+    if (rec && rec.posts) { log('using an older copy of the listing'); return { posts: rec.posts, via: rec.via, stale: true, ttlLeft: STALE_TTL_MS }; }
     throw e;
   }
 }
@@ -743,8 +884,8 @@ function propertiesFor(preset, post, wants, settings) {
   if (wants('title')) p.title = { shortText: { text: settings.titleShort === 'abbrev' ? fitShort(post.title, 7) : post.title }, longText: { text: post.title } };
   if (wants('author')) p.author = { shortText: { text: 'u/' + post.author }, longText: { text: 'u/' + post.author } };
   if (wants('subreddit')) p.subreddit = { shortText: { text: 'r/' + post.subreddit }, longText: { text: 'r/' + post.subreddit } };
-  if (wants('score')) p.score = { numericValue: { value: post.score }, shortText: { text: compactCount(post.score) } };
-  if (wants('comments')) p.comments = { numericValue: { value: post.comments }, shortText: { text: compactCount(post.comments) } };
+  if (wants('score') && post.score !== null) p.score = { numericValue: { value: post.score }, shortText: { text: compactCount(post.score) } };
+  if (wants('comments') && post.comments !== null) p.comments = { numericValue: { value: post.comments }, shortText: { text: compactCount(post.comments) } };
   if (wants('posted') && post.created) p.posted = { timestamp: { value: Math.floor(post.created) }, shortText: { text: agoText(post.created) } };
   if (wants('permalink') && post.permalink) p.permalink = { longText: { text: post.permalink } };
   if (wants('image_url')) {
@@ -768,7 +909,7 @@ Pebble.registerSourceHandler(async function (request, respond) {
     var preset = settings.presets[i], post = null;
     try {
       if (Date.now() - started > REQUEST_BUDGET_MS) throw new Error('out of time budget');
-      var listing = await getListing(preset, log, {});
+      var listing = await getListing(preset, settings, log, {});
       ttl = Math.min(ttl, listing.ttlLeft);
       var pick = pickPost(listing.posts, preset, settings);
       post = pick && pick.post;
@@ -797,15 +938,15 @@ Pebble.registerSourceHandler(async function (request, respond) {
 
 // ---------------------------------------------------------------- config page conversation
 
-async function missingPermissions() {
+async function missingPermissions(settings) {
   var perms = Pebble.permissions;
   if (!perms || typeof perms.query !== 'function') return null;
-  var missing = [];
-  for (var i = 0; i < REQUIRED_HOSTS.length; i++) {
+  var missing = [], hosts = hasCredentials(settings) ? [API_HOST].concat(REQUIRED_HOSTS) : REQUIRED_HOSTS;
+  for (var i = 0; i < hosts.length; i++) {
     try {
-      var state = await perms.query('Internet/' + REQUIRED_HOSTS[i]);
+      var state = await perms.query('Internet/' + hosts[i]);
       var value = state && typeof state === 'object' ? (state.state || state.status) : state;
-      if (value && value !== 'granted') missing.push(REQUIRED_HOSTS[i]);
+      if (value && value !== 'granted') missing.push(hosts[i]);
     } catch (e) { /* unknown: don't nag */ }
   }
   return missing;
@@ -823,15 +964,32 @@ Pebble.registerConfigHandler(async function (message, respond) {
         version: VERSION, settings: loadSettings(), defaults: sanitizeSettings({}), periods: periodList(), suggested: SUGGESTED_SUBREDDITS, maxPresets: MAX_PRESETS,
         defaultPreset: sanitizePreset(DEFAULT_PRESET, 0, {}),
         lastError: storeGet(ERROR_KEY),
-        missingPermissions: await missingPermissions()
+        missingPermissions: await missingPermissions(loadSettings())
       });
     } else if (type === 'save') {
       var s = sanitizeSettings(message.settings);
       storeSet(SETTINGS_KEY, s);
       try { Pebble.refreshSources([SOURCE_KEY]); } catch (e) { /* ignore */ }
       respond({ ok: true, settings: s });
+    } else if (type === 'testAuth') {
+      var ts = sanitizeSettings(message.settings || loadSettings());
+      var tr = { version: VERSION, hasCredentials: hasCredentials(ts) };
+      if (!tr.hasCredentials) {
+        tr.error = 'Enter the client ID first.';
+      } else {
+        try {
+          await getToken(ts, log, true);
+          var tp = sanitizePreset(message.preset || ts.presets[0], 0, {});
+          var posts = await downloadListingOAuth(tp, ts, log);
+          tr.ok = true; tr.message = 'Works: signed in to Reddit and read r/' + tp.subreddit + ' (' + posts.length + ' picture posts in the top list).';
+        } catch (e) { tr.error = errText(e); }
+      }
+      tr.missingPermissions = await missingPermissions(ts);
+      tr.log = log.lines;
+      respond(tr);
     } else if (type === 'clearCache') {
       clearCaches();
+      storeRemove(TOKEN_KEY);
       storeRemove(ERROR_KEY);
       respond({ ok: true });
     } else if (type === 'preview') {
@@ -840,8 +998,8 @@ Pebble.registerConfigHandler(async function (message, respond) {
       var w = clampInt(message.width, 1, 260, 144), h = clampInt(message.height, 1, 260, 168);
       var res = { version: VERSION, width: w, height: h, preset: preset };
       try {
-        var listing = await getListing(preset, log, { force: !!message.fresh });
-        res.stale = listing.stale;
+        var listing = await getListing(preset, settings, log, { force: !!message.fresh });
+        res.stale = listing.stale; res.via = listing.via;
         var pick = pickPost(listing.posts, preset, settings);
         if (!pick) {
           res.error = 'No usable picture post in the top ' + listing.posts.length + ' of r/' + preset.subreddit + ' (' + PERIODS[preset.period].label + ')' + (preset.nsfw ? '' : '; NSFW posts are hidden') + '.';
@@ -855,7 +1013,7 @@ Pebble.registerConfigHandler(async function (message, respond) {
           } catch (e) { res.imageError = errText(e); }
         }
       } catch (e) { res.error = errText(e); }
-      res.missingPermissions = await missingPermissions();
+      res.missingPermissions = await missingPermissions(settings);
       res.log = log.lines;
       respond(res);
     } else {

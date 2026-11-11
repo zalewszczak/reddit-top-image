@@ -1,7 +1,7 @@
 {
   "name": "reddit-top-image",
   "author": "zalew",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "keywords": [
     "pebble-plugin"
   ],
@@ -23,7 +23,7 @@
         "parameters": {
           "domains": [
             "www.reddit.com",
-            "old.reddit.com",
+            "oauth.reddit.com",
             "i.redd.it",
             "preview.redd.it",
             "external-preview.redd.it",

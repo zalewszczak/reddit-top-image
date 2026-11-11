@@ -52,8 +52,10 @@
   .tabs { display:flex; gap:6px; flex-wrap:wrap; margin-bottom:6px; }
   .tabs button { padding:6px 10px; font-size:.9rem; }
   .tabs button.sel { background:var(--accent); color:var(--accent-fg); border-color:var(--accent); }
-  input[type=text] { font:inherit; color:inherit; background:var(--bg); border:1px solid var(--line); border-radius:8px; padding:8px; flex:1 1 180px; min-width:0; }
+  input[type=text], input[type=password] { font:inherit; color:inherit; background:var(--bg); border:1px solid var(--line); border-radius:8px; padding:8px; flex:1 1 180px; min-width:0; }
   a { color:var(--accent); word-break:break-all; }
+  .how { padding-left:20px; font-size:.88rem; color:var(--muted); }
+  .how li { margin:6px 0; }
 </style>
 </head>
 <body>
@@ -80,6 +82,24 @@
     <div class="actions"><button id="fetch" class="primary" disabled>Fetch &amp; convert</button><button id="fresh" disabled>Refetch listing</button></div>
     <details><summary>Diagnostics</summary><pre id="log">(nothing yet)</pre>
       <div class="row"><button id="clear">Clear caches</button></div>
+    </details>
+  </div>
+
+  <h2>Reddit API access</h2>
+  <div class="card">
+    <p class="sub" style="margin-top:0">Optional. Without a key the plugin falls back to Reddit's public RSS feed: title, author and picture only (no score or comments, and NSFW posts can't be filtered). With a free Reddit API key you get everything. The key stays on this phone and is only sent to Reddit.</p>
+    <div class="row"><label for="clientId">Client ID</label><input type="text" id="clientId" maxlength="60" placeholder="14 characters, under the app name" autocapitalize="off" autocorrect="off" spellcheck="false"></div>
+    <div class="row"><label for="clientSecret">Secret</label><input type="password" id="clientSecret" maxlength="100" placeholder="empty for an &ldquo;installed app&rdquo;" autocapitalize="off" autocorrect="off" spellcheck="false"></div>
+    <div class="actions"><button id="testAuth" disabled>Test credentials</button></div>
+    <p id="authStatus" class="status"></p>
+    <details><summary>How to get the key</summary>
+      <ol class="how">
+        <li>Log in to Reddit and open <a href="https://www.reddit.com/prefs/apps" target="_blank" rel="noreferrer">reddit.com/prefs/apps</a>, then press <b>create another app</b>.</li>
+        <li>Name: anything (e.g. <i>Pebble pictures</i>). Type: <b>script</b>. Redirect URI: <code>http://localhost:8080</code>. Create it.</li>
+        <li>The <b>client ID</b> is the short text right under the app name; the <b>secret</b> is shown next to <i>secret</i> (press edit if hidden). Paste both above and press <b>Test credentials</b>, then <b>Save</b>.</li>
+        <li>No secret? Choose type <b>installed app</b> instead and leave the secret empty.</li>
+        <li>Since late 2025 Reddit asks new developers to accept its <a href="https://support.reddithelp.com/hc/en-us/articles/42728983564564-Responsible-Builder-Policy" target="_blank" rel="noreferrer">Responsible Builder Policy</a> and may need to approve new apps first (describe it as: personal watch picture, a few requests per hour). Keys of apps created earlier keep working. Until the key works, Test credentials will say so.</li>
+      </ol>
     </details>
   </div>
 
@@ -139,9 +159,10 @@
   function schedule(ms) { clearTimeout(timer); timer = setTimeout(function () { if (ready) preview(false); }, ms || 800); }
 
   function readGlobal() {
-    return { presets: presets, fit: $('fit').value, color: $('color').value, dim: +$('dim').value, titleShort: $('titleShort').value, videos: $('videos').value, dither: $('dither').checked };
+    return { presets: presets, clientId: $('clientId').value.trim(), clientSecret: $('clientSecret').value.trim(), fit: $('fit').value, color: $('color').value, dim: +$('dim').value, titleShort: $('titleShort').value, videos: $('videos').value, dither: $('dither').checked };
   }
   function writeGlobal(s) {
+    $('clientId').value = s.clientId || ''; $('clientSecret').value = s.clientSecret || '';
     $('fit').value = s.fit; $('color').value = s.color; $('dim').value = s.dim; $('dimv').textContent = s.dim;
     $('titleShort').value = s.titleShort || 'full'; $('videos').value = s.videos || 'skip'; $('dither').checked = !!s.dither;
   }
@@ -182,7 +203,7 @@
   }
   function lock(on) {
     busy = on;
-    ['fetch', 'fresh', 'save', 'clear'].forEach(function (id) { $(id).disabled = on || !ready; });
+    ['fetch', 'fresh', 'save', 'clear', 'testAuth'].forEach(function (id) { $(id).disabled = on || !ready; });
   }
   function showBanner(missing, extra) {
     var b = $('banner'), parts = [];
@@ -213,7 +234,7 @@
     var p = r.post;
     function line(text) { var e = document.createElement('p'); e.textContent = text; m.appendChild(e); return e; }
     var h = document.createElement('h3'); h.textContent = p.title; m.appendChild(h);
-    line('u/' + p.author + ' · r/' + p.subreddit + ' · ' + p.score + ' points · ' + p.comments + ' comments');
+    line('u/' + p.author + ' · r/' + p.subreddit + (p.score === null ? '' : ' · ' + p.score + ' points · ' + p.comments + ' comments'));
     line(fmtTime(p.created) + (p.nsfw ? ' · NSFW' : '') + (p.video ? ' · video post (preview picture)' : '') + (r.skipped ? ' · #' + (r.skipped + 1) + ' in the list (earlier ones skipped)' : ''));
     if (r.served) line('Served as short text: \u201c' + r.served.titleShort + '\u201d · long text: full title (' + r.served.titleLong.length + ' characters)');
     if (p.permalink) { var a = document.createElement('p'), l = document.createElement('a'); l.href = p.permalink; l.textContent = p.permalink; l.target = '_blank'; l.rel = 'noreferrer'; a.appendChild(l); m.appendChild(a); }
@@ -245,7 +266,7 @@
         drawBitmap(r.image);
         var i = r.info || {};
         $('canvasCap').textContent = 'What a watchface receives · ' + r.image.width + '×' + r.image.height + ', 16-colour palette';
-        setStatus('Works: ' + (i.format || '').toUpperCase() + ' ' + (i.sourceWidth || '?') + '×' + (i.sourceHeight || '?') + ', ' + Math.round((i.bytes || 0) / 1024) + ' KB downloaded.' + (r.stale ? ' (Reddit could not be reached; showing an older listing.)' : ''));
+        setStatus('Works: ' + (i.format || '').toUpperCase() + ' ' + (i.sourceWidth || '?') + '×' + (i.sourceHeight || '?') + ', ' + Math.round((i.bytes || 0) / 1024) + ' KB downloaded.' + (r.via === 'rss' ? ' Via Reddit RSS (no API key): no score/comments, and NSFW posts cannot be filtered reliably.' : '') + (r.stale ? ' (Reddit could not be reached; showing an older listing.)' : ''));
       } else {
         clearCanvas(sz.w, sz.h);
         setStatus('Post found, but no image: ' + (r.imageError || 'unknown reason') + ' (see Diagnostics)', true);
@@ -269,6 +290,18 @@
   $('fetch').onclick = function () { preview(false); };
   $('fresh').onclick = function () { preview(true); };
   $('save').onclick = save;
+  $('testAuth').onclick = async function () {
+    if (busy) return; lock(true);
+    var a = $('authStatus'); a.className = 'status'; a.textContent = 'Signing in to Reddit…';
+    try {
+      readForm();
+      var r = await send({ type: 'testAuth', settings: readGlobal(), preset: presets[sel] });
+      $('log').textContent = (r.log && r.log.length ? r.log.join('\n') : '(no log)');
+      showBanner(r.missingPermissions);
+      a.className = 'status' + (r.ok ? '' : ' bad'); a.textContent = r.ok ? r.message : (r.error || 'failed');
+    } catch (e) { a.className = 'status bad'; a.textContent = '' + e; } finally { lock(false); }
+  };
+  ['clientId', 'clientSecret'].forEach(function (id) { $(id).addEventListener('change', function () { $('authStatus').textContent = ''; schedule(600); }); });
   $('preset').onchange = function () { $('customRow').hidden = $('preset').value !== 'custom'; schedule(200); };
   $('cw').onchange = $('ch').onchange = function () { schedule(300); };
   $('dim').oninput = function () { $('dimv').textContent = $('dim').value; };
